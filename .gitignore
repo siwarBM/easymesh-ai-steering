@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+mininet-wifi-env/
+
+# Data files (often too large for git)
+data/*.csv
+data/*.json
+
+# OS files
+.DS_Store
