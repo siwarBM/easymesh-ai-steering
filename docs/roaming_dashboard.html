@@ -1,0 +1,765 @@
+<title>sta1 Roaming Inspector</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: instrument panel. Header strip -> verdict tiles -> RSSI-vs-time chart + corridor strip (linked by one time cursor) -> per-second comparison table -> load-a-run drawer. */
+:root {
+  --bg: #f4f6f6;
+  --panel: #ffffff;
+  --ink: #142022;
+  --ink-2: #4a5a5d;
+  --ink-3: #7a898b;
+  --line: #dbe2e2;
+  --grid: #e8eded;
+  --accent: #0e6a73;
+  --accent-soft: #e0eff0;
+  --run-a: #2a78d6;
+  --run-b: #eb6834;
+  --model: #8a9799;
+  --band: #e9f3ee;
+  --nolink: #f1ecef;
+  --ok: #1d7f4e;  --ok-bg: #e2f2e9;
+  --warn: #9a6400; --warn-bg: #fbf0d9;
+  --bad: #b3322f; --bad-bg: #fae3e2;
+  --f-display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1515; --panel: #172021; --ink: #e6eeee; --ink-2: #a9b8ba; --ink-3: #7d8d8f;
+    --line: #2a3738; --grid: #222d2e; --accent: #4fb3bc; --accent-soft: #1b3436;
+    --run-a: #3987e5; --run-b: #d95926; --model: #7f8f91; --band: #16291f; --nolink: #2a1f25;
+    --ok: #5cc98f; --ok-bg: #173325; --warn: #e5b04a; --warn-bg: #352a12; --bad: #f07d7a; --bad-bg: #3a1c1c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1515; --panel: #172021; --ink: #e6eeee; --ink-2: #a9b8ba; --ink-3: #7d8d8f;
+  --line: #2a3738; --grid: #222d2e; --accent: #4fb3bc; --accent-soft: #1b3436;
+  --run-a: #3987e5; --run-b: #d95926; --model: #7f8f91; --band: #16291f; --nolink: #2a1f25;
+  --ok: #5cc98f; --ok-bg: #173325; --warn: #e5b04a; --warn-bg: #352a12; --bad: #f07d7a; --bad-bg: #3a1c1c;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 400 14px/1.55 var(--f-body);
+  padding-block: 20px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 18px; }
+h1, h2 { font-family: var(--f-display); font-weight: 700; margin: 0; text-wrap: balance; letter-spacing: .005em; }
+h1 { font-size: 30px; line-height: 1.1; }
+h2 { font-size: 17px; font-weight: 600; }
+.eyebrow { font: 600 11.5px/1 var(--f-display); text-transform: uppercase; letter-spacing: .12em; color: var(--accent); }
+.muted { color: var(--ink-2); }
+.mono, .num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+
+header { display: grid; gap: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 12px/1 var(--f-mono); padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink-2); }
+.chip b { color: var(--ink); font-weight: 500; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+
+/* compare bar */
+.controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 18px; }
+.field { display: grid; gap: 4px; }
+.field label { font: 600 11.5px/1 var(--f-display); text-transform: uppercase; letter-spacing: .1em; color: var(--ink-2); }
+select, input[type="number"], input[type="text"], textarea {
+  font: 400 13.5px/1.3 var(--f-body); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px;
+}
+input[type="number"] { width: 76px; font-family: var(--f-mono); }
+select { min-width: 0; max-width: 100%; }
+select:focus-visible, input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 6px; }
+
+/* verdict tiles */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.runcard { display: grid; gap: 10px; }
+.runcard h2 { display: flex; align-items: center; gap: 8px; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.stat { display: grid; gap: 4px; align-content: start; }
+.stat .k { font: 600 11px/1.2 var(--f-display); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-3); }
+.stat .v { font: 500 20px/1.1 var(--f-mono); font-variant-numeric: tabular-nums; }
+.pill { display: inline-flex; align-items: center; gap: 5px; font: 600 11.5px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; padding: 4px 7px; border-radius: 999px; white-space: nowrap; }
+.pill.ok { color: var(--ok); background: var(--ok-bg); }
+.pill.warn { color: var(--warn); background: var(--warn-bg); }
+.pill.bad { color: var(--bad); background: var(--bad-bg); }
+.pill.none { color: var(--ink-2); background: var(--grid); }
+
+/* chart */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.key-line { width: 18px; height: 0; border-top: 2px solid; }
+.key-line.dash { border-top-style: dashed; }
+.key-line.dot { border-top-style: dotted; }
+.key-box { width: 14px; height: 10px; border-radius: 2px; }
+.chart-box { position: relative; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { font-family: var(--f-mono); font-size: 11px; fill: var(--ink-3); }
+.tip {
+  position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; font: 12px/1.45 var(--f-body); box-shadow: 0 4px 16px rgb(0 0 0 / .12);
+  min-width: 190px; z-index: 2;
+}
+.tip .t { font: 600 12px/1.2 var(--f-mono); margin-bottom: 4px; }
+.tip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tip .row .num { color: var(--ink); }
+.scrub { display: flex; align-items: center; gap: 12px; }
+.scrub input { flex: 1; accent-color: var(--accent); }
+.scrub output { font: 500 13px/1 var(--f-mono); min-width: 84px; text-align: right; }
+
+/* table */
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; max-height: 520px; overflow-y: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 820px; }
+th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--panel); font: 600 11px/1.2 var(--f-display); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); z-index: 1; border-bottom: 1px solid var(--line); }
+td { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+td.l, th.l { text-align: left; }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--accent-soft); }
+tbody tr.active td { background: var(--accent-soft); box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
+.delta-pos { color: var(--ok); } .delta-neg { color: var(--bad); }
+.dim { color: var(--ink-3); }
+
+/* findings + loader */
+.findings { margin: 0; padding-left: 18px; display: grid; gap: 6px; max-width: 75ch; }
+details.panel summary { cursor: pointer; font: 600 17px/1.2 var(--f-display); list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+details.panel summary::-webkit-details-marker { display: none; }
+details.panel summary::after { content: "+"; font-family: var(--f-mono); color: var(--accent); }
+details[open].panel summary::after { content: "−"; }
+textarea { width: 100%; min-height: 150px; font: 12px/1.45 var(--f-mono); resize: vertical; }
+.loader-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+button {
+  font: 600 13px/1 var(--f-body); padding: 9px 14px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--panel);
+}
+button.ghost { background: transparent; color: var(--accent); }
+.msg { font-size: 13px; }
+.msg.err { color: var(--bad); } .msg.ok { color: var(--ok); }
+input[type="file"] { font-size: 13px; color: var(--ink-2); max-width: 100%; }
+
+@media (max-width: 760px) {
+  .tiles { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  h1 { font-size: 25px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">easymesh-ai-steering · simulation/topology_2ap.py</div>
+    <h1>sta1 Roaming Inspector</h1>
+    <p class="muted" style="margin:0;max-width:75ch">Each simulated second, where sta1 was, which AP it was connected to, and how that compares with the AP it should have been on. Runs 1–3 are loaded: two that never roamed (6 Nov), and the fixed run that hands over to ap2 (9 Nov). Paste a new run's log at the bottom to compare it.</p>
+    <div class="chips">
+      <span class="chip"><b>ap1</b> ch 1 · x = 30 m</span>
+      <span class="chip"><b>ap2</b> ch 6 · x = 90 m</span>
+      <span class="chip"><b>sta1</b> walks 10 → 110 m, t = 1–31 s</span>
+      <span class="chip"><b>bgscan</b> simple:2:-60:5</span>
+      <span class="chip"><b>model</b> logDistance, exp 3.5</span>
+    </div>
+  </header>
+
+  <section class="panel">
+    <div class="controls">
+      <div class="field">
+        <label for="sel-a">Run A</label>
+        <select id="sel-a"></select>
+      </div>
+      <div class="field">
+        <label for="sel-b">Run B</label>
+        <select id="sel-b"></select>
+      </div>
+      <div class="field">
+        <label for="margin">Roam margin (dB)</label>
+        <input id="margin" type="number" min="0" max="20" step="1" value="5">
+      </div>
+      <p class="muted" style="margin:0;flex:1 1 260px;font-size:12.5px">A second counts as <b>sticky</b> when the other AP's modelled signal beats the connected one by at least the roam margin.</p>
+    </div>
+  </section>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Signal at sta1 over time</h2>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="chart-box" id="chart-box">
+      <svg id="chart" role="img" aria-label="RSSI in dBm against time for both runs, with modelled signal from each AP"></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <div class="panel-head" style="margin-top:4px">
+      <h2>Corridor position</h2>
+      <span class="muted" style="font-size:12.5px">Thin line = the AP each run is connected to</span>
+    </div>
+    <svg id="corridor" role="img" aria-label="Station positions along the 0 to 120 metre corridor"></svg>
+    <div class="scrub">
+      <label for="t-scrub" class="eyebrow" style="color:var(--ink-2)">Time</label>
+      <input id="t-scrub" type="range" min="0" max="32" step="1" value="20">
+      <output id="t-out" for="t-scrub">t = 20 s</output>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Second by second</h2>
+      <span class="muted" style="font-size:12.5px">Click a row to move the time cursor</span>
+    </div>
+    <div class="table-scroll"><table id="table"></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>What the runs show</h2>
+    <ul class="findings" id="findings"></ul>
+  </section>
+
+  <details class="panel" id="loader">
+    <summary>Add a run from a log</summary>
+    <p class="muted" style="margin:0;max-width:75ch">Paste the output of <span class="mono">topology_2ap.py --no-cli</span>, or the whole <span class="mono">mnwifi_checks.log</span>. Lines starting with <span class="mono">|</span> (scan results from <span class="mono">--wpa-log</span>) are picked up too. Added runs are kept in this browser only.</p>
+    <div class="loader-row">
+      <div class="field" style="flex:1 1 220px">
+        <label for="run-name">Run name</label>
+        <input id="run-name" type="text" placeholder="e.g. WPA2 + debug log">
+      </div>
+      <div class="field">
+        <label for="run-file">Or open a log file</label>
+        <input id="run-file" type="file" accept=".log,.txt,text/plain">
+      </div>
+    </div>
+    <textarea id="run-text" aria-label="Log text" placeholder="t(s)  x(m)   AP    RSSI(dBm)&#10;   0   10.7   -     -&#10;   1   14.0   ap1   -38&#10;      | 00:00:00:00:00:02	2437	-58	[WPA2-PSK-CCMP][ESS]	easymesh"></textarea>
+    <div class="loader-row">
+      <button id="add-run" type="button">Add run</button>
+      <button id="clear-runs" type="button" class="ghost">Remove added runs</button>
+      <span class="msg" id="msg" role="status"></span>
+    </div>
+  </details>
+</div>
+
+<script>
+(() => {
+"use strict";
+const AP_POS = { ap1: 30, ap2: 90 };
+const AP_BY_MAC = { "00:00:00:00:00:01": "ap1", "00:00:00:00:00:02": "ap2" };
+const EXP = 3.5, THRESH = -60, Y_MIN = -90, Y_MAX = -30, X_MAX = 120;
+
+const LOG_OPEN = `t(s)  x(m)   AP    RSSI(dBm)
+   0   10.7   -     -
+   1   14.3   -     -
+   2   17.6   -     -
+   3   20.9   -     -
+   4   24.2   -     -
+   5   27.5   -     -
+   6   30.8   -     -
+   7   34.1   ap1   -37
+   8   37.7   ap1   -47
+   9   41.0   ap1   -52
+  10   44.3   ap1   -56
+  11   47.6   ap1   -59
+  12   50.9   ap1   -62
+  13   54.2   ap1   -64
+  14   57.9   ap1   -66
+  15   61.1   ap1   -68
+  16   64.5   ap1   -69
+  17   67.8   ap1   -71
+  18   71.0   ap1   -72
+  19   74.3   ap1   -73
+  20   77.6   ap1   -74
+  21   81.3   ap1   -75
+  22   84.6   ap1   -76
+  23   87.9   ap1   -77
+  24   91.2   ap1   -78
+  25   94.5   ap1   -79
+  26   97.8   ap1   -80
+  27  101.4   ap1   -80
+  28  104.7   ap1   -81
+  29  108.0   ap1   -82
+  30  109.0   ap1   -82
+  31  109.0   ap1   -82
+  32  109.0   ap1   -82`;
+const LOG_WPA2 = LOG_OPEN
+  .replace("   1   14.3", "   1   14.0")
+  .replace("ap1   -47", "ap1   -46")
+  .replace("  14   57.9", "  14   57.5")
+  .replace("  20   77.6", "  20   78.0");
+
+const LOG_FIXED = `t(s)  x(m)   AP    RSSI(dBm)
+   0   10.7   ap1   -61
+      | 00:00:00:00:00:01	2412	-62	[WPA2-PSK-CCMP][ESS]	easymesh
+      | 00:00:00:00:00:02	2437	-82	[WPA2-PSK-CCMP][ESS]	easymesh
+   1   14.0   ap1   -58
+   2   17.3   ap1   -54
+   3   20.6   ap1   -50
+   4   24.2   ap1   -43
+   5   27.5   ap1   -31
+      | 00:00:00:00:00:01	2412	-33	[WPA2-PSK-CCMP][ESS]	easymesh
+      | 00:00:00:00:00:02	2437	-81	[WPA2-PSK-CCMP][ESS]	easymesh
+   6   30.8   ap1   -4
+   7   34.1   ap1   -37
+   8   37.4   ap1   -46
+   9   41.0   ap1   -52
+  10   44.3   ap1   -56
+      | 00:00:00:00:00:01	2412	-27	[WPA2-PSK-CCMP][ESS]	easymesh
+      | 00:00:00:00:00:02	2437	-77	[WPA2-PSK-CCMP][ESS]	easymesh
+  11   47.6   ap1   -59
+  12   50.9   ap1   -62
+  13   54.2   ap1   -64
+  14   57.5   ap1   -66
+  15   61.1   ap1   -68
+      | 00:00:00:00:00:01	2412	-67	[WPA2-PSK-CCMP][ESS]	easymesh
+      | 00:00:00:00:00:02	2437	-68	[WPA2-PSK-CCMP][ESS]	easymesh
+  16   64.5   ap1   -69
+  17   67.8   ap1   -71
+  18   71.0   ap1   -72
+  19   74.7   ap2   -57
+  20   78.0   ap2   -53
+      | 00:00:00:00:00:01	2412	-72	[WPA2-PSK-CCMP][ESS]	easymesh
+      | 00:00:00:00:00:02	2437	-54	[WPA2-PSK-CCMP][ESS]	easymesh
+  21   81.3   ap2   -49
+  22   84.6   ap2   -41
+  23   87.9   ap2   -29
+  24   91.2   ap2   -13
+  25   94.8   ap2   -38
+      | 00:00:00:00:00:01	2412	-77	[WPA2-PSK-CCMP][ESS]	easymesh
+      | 00:00:00:00:00:02	2437	-12	[WPA2-PSK-CCMP][ESS]	easymesh
+  26   98.1   ap2   -47
+  27  101.4   ap2   -52
+  28  104.7   ap2   -56
+  29  108.0   ap2   -60
+  30  109.0   ap2   -60
+      | 00:00:00:00:00:01	2412	-81	[WPA2-PSK-CCMP][ESS]	easymesh
+      | 00:00:00:00:00:02	2437	-58	[WPA2-PSK-CCMP][ESS]	easymesh
+  31  109.0   ap2   -60
+  32  109.0   ap2   -60`;
+
+const BUILTIN = [
+  { id: "open", name: "Run 1 · open APs (14:16)", text: LOG_OPEN },
+  { id: "wpa2", name: "Run 2 · WPA2 APs (14:24)", text: LOG_WPA2 },
+  { id: "fixed", name: "Run 3 · scan ch 1+6 only (9 Nov)", text: LOG_FIXED },
+];
+
+/* ---------- parsing ---------- */
+function parseLog(text) {
+  const rows = [];
+  const rowRe = /^\s*(\d+)\s+(-?\d+(?:\.\d+)?)\s+(\S+)\s+(-?\d+|-)\s*$/;
+  const scanRe = /^\s*\|\s*([0-9a-f]{2}(?::[0-9a-f]{2}){5})\s+(\d+)\s+(-?\d+)/i;
+  for (const line of text.split(/\r?\n/)) {
+    let m = line.match(rowRe);
+    if (m) {
+      const ap = m[3] === "-" ? null : m[3];
+      rows.push({ t: +m[1], x: +m[2], ap, rssi: m[4] === "-" ? null : +m[4], scan: {} });
+      continue;
+    }
+    m = line.match(scanRe);
+    if (m && rows.length) {
+      const name = AP_BY_MAC[m[1].toLowerCase()] || m[1];
+      rows[rows.length - 1].scan[name] = { freq: +m[2], rssi: +m[3] };
+    }
+  }
+  return rows;
+}
+
+/* ---------- storage (per-viewer convenience) ---------- */
+const KEY = "sta1-roaming-runs";
+function loadSaved() { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { return []; } }
+function save(list) { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch {} }
+
+let saved = loadSaved();
+let runs = [];
+function rebuildRuns() {
+  runs = [...BUILTIN, ...saved].map(r => ({ ...r, rows: parseLog(r.text) })).filter(r => r.rows.length);
+}
+
+/* ---------- model ---------- */
+// Reference loss at 1 m, fitted from every connected sample with exp fixed at 3.5.
+function fitRef() {
+  const vals = [];
+  for (const r of runs) for (const s of r.rows) {
+    if (s.rssi == null || !(s.ap in AP_POS)) continue;
+    const d = Math.max(Math.abs(s.x - AP_POS[s.ap]), 1);
+    vals.push(s.rssi + 10 * EXP * Math.log10(d));
+  }
+  if (!vals.length) return -15.6;
+  vals.sort((a, b) => a - b);
+  return vals[Math.floor(vals.length / 2)];
+}
+let REF = -15.6;
+const model = (ap, x) => REF - 10 * EXP * Math.log10(Math.max(Math.abs(x - AP_POS[ap]), 1));
+const bestAp = x => (model("ap1", x) >= model("ap2", x) ? "ap1" : "ap2");
+const other = ap => (ap === "ap1" ? "ap2" : "ap1");
+
+function verdict(s, margin) {
+  if (s.rssi == null || !s.ap) return { cls: "none", label: "No link" };
+  if (s.ap in AP_POS) {
+    const gain = model(other(s.ap), s.x) - s.rssi;
+    if (gain >= margin) return { cls: "bad", label: "Sticky", gain };
+  }
+  if (s.rssi < THRESH) return { cls: "warn", label: "Weak", gain: 0 };
+  return { cls: "ok", label: "OK", gain: 0 };
+}
+
+function summarize(run, margin) {
+  const rows = run.rows;
+  const first = rows.find(s => s.rssi != null);
+  let handovers = 0, prev = null, sticky = 0, weak = 0, nolink = 0, firstSticky = null;
+  for (const s of rows) {
+    if (s.ap) { if (prev && s.ap !== prev) handovers++; prev = s.ap; }
+    const v = verdict(s, margin);
+    if (v.cls === "bad") { sticky++; if (firstSticky == null) firstSticky = s; }
+    if (s.rssi != null && s.rssi < THRESH) weak++;
+    if (v.cls === "none") nolink++;
+  }
+  const connected = rows.filter(s => s.rssi != null);
+  const worst = connected.length ? Math.min(...connected.map(s => s.rssi)) : null;
+  const scans = rows.filter(s => Object.keys(s.scan).length).length;
+  return { first, handovers, sticky, weak, nolink, worst, firstSticky, scans, n: rows.length };
+}
+
+/* ---------- state ---------- */
+const $ = id => document.getElementById(id);
+const state = { a: "wpa2", b: "fixed", margin: 5, t: 19 };
+const runById = id => runs.find(r => r.id === id) || runs[0];
+const sample = (run, t) => run.rows.find(s => s.t === t);
+const fmt = v => (v == null ? "–" : (v > 0 ? "+" : "") + v);
+const dbm = v => (v == null ? "–" : `${Math.round(v)}`.replace("-", "−"));
+
+/* ---------- render: selects ---------- */
+function renderSelects() {
+  for (const [sel, key] of [[$("sel-a"), "a"], [$("sel-b"), "b"]]) {
+    sel.innerHTML = runs.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join("");
+    if (!runs.some(r => r.id === state[key])) state[key] = runs[key === "a" ? 0 : Math.min(1, runs.length - 1)].id;
+    sel.value = state[key];
+  }
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ---------- render: tiles ---------- */
+function renderTiles() {
+  const out = [];
+  for (const [key, color] of [["a", "var(--run-a)"], ["b", "var(--run-b)"]]) {
+    const run = runById(state[key]);
+    const s = summarize(run, state.margin);
+    const linkPill = !s.first ? `<span class="pill bad">✕ Never connected</span>`
+      : s.first.t > 2 ? `<span class="pill warn">▲ Linked late · t = ${s.first.t} s</span>`
+      : `<span class="pill ok">✓ Linked at t = ${s.first.t} s</span>`;
+    const roamPill = s.handovers > 0 ? `<span class="pill ok">✓ ${s.handovers} handover${s.handovers > 1 ? "s" : ""}</span>`
+      : `<span class="pill bad">✕ No handover</span>`;
+    out.push(`<article class="panel runcard">
+      <h2><span class="swatch" style="background:${color}"></span>Run ${key.toUpperCase()} · ${esc(run.name)}</h2>
+      <div class="chips">${linkPill}${roamPill}</div>
+      <div class="stats">
+        <div class="stat"><span class="k">Sticky</span><span class="v">${s.sticky} s</span></div>
+        <div class="stat"><span class="k">Below −60 dBm</span><span class="v">${s.weak} s</span></div>
+        <div class="stat"><span class="k">No link</span><span class="v">${s.nolink} s</span></div>
+        <div class="stat"><span class="k">Worst RSSI</span><span class="v">${s.worst == null ? "–" : dbm(s.worst)}</span></div>
+      </div>
+    </article>`);
+  }
+  $("tiles").innerHTML = out.join("");
+}
+
+/* ---------- render: chart ---------- */
+const NS = "http://www.w3.org/2000/svg";
+let geom = null;
+function renderChart() {
+  const box = $("chart-box");
+  const W = Math.max(320, box.clientWidth);
+  const narrow = W < 560;
+  const H = narrow ? 300 : 360;
+  const m = { l: 44, r: narrow ? 14 : 96, t: 14, b: 34 };
+  const A = runById(state.a), B = runById(state.b);
+  const tMax = Math.max(...A.rows.map(s => s.t), ...B.rows.map(s => s.t), 1);
+  const sx = t => m.l + (t / tMax) * (W - m.l - m.r);
+  const sy = v => m.t + ((Y_MAX - v) / (Y_MAX - Y_MIN)) * (H - m.t - m.b);
+  geom = { W, H, m, sx, sy, tMax };
+  let g = "";
+
+  // bands: ap2 is the better AP (by model, using run A's positions) + no-link spans
+  const spans = (pred) => {
+    const res = []; let start = null;
+    A.rows.forEach((s, i) => {
+      if (pred(s) && start == null) start = s.t;
+      const next = A.rows[i + 1];
+      if (start != null && (!next || !pred(next))) { res.push([start, s.t]); start = null; }
+    });
+    return res;
+  };
+  for (const [t0, t1] of spans(s => bestAp(s.x) === "ap2")) {
+    const x0 = sx(Math.max(t0 - 0.5, 0)), x1 = sx(Math.min(t1 + 0.5, tMax));
+    g += `<rect x="${x0}" y="${m.t}" width="${x1 - x0}" height="${H - m.t - m.b}" fill="var(--band)"/>`;
+    g += `<text x="${x0 + 6}" y="${m.t + 14}" style="fill:var(--ok);font-family:var(--f-display);font-weight:600;letter-spacing:.06em">AP2 IS THE BETTER AP</text>`;
+  }
+  for (const [t0, t1] of spans(s => s.rssi == null)) {
+    const x0 = sx(Math.max(t0 - 0.5, 0)), x1 = sx(Math.min(t1 + 0.5, tMax));
+    g += `<rect x="${x0}" y="${m.t}" width="${x1 - x0}" height="${H - m.t - m.b}" fill="var(--nolink)"/>`;
+    g += `<text x="${x0 + 6}" y="${H - m.b - 8}" style="fill:var(--ink-2);font-family:var(--f-display);font-weight:600;letter-spacing:.06em">NO LINK (RUN A)</text>`;
+  }
+
+  // grid + axes
+  for (let v = Y_MIN; v <= Y_MAX; v += 10) {
+    g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(v)}" y2="${sy(v)}" stroke="var(--grid)" stroke-width="1"/>`;
+    g += `<text x="${m.l - 8}" y="${sy(v) + 4}" text-anchor="end">${dbm(v)}</text>`;
+  }
+  const tStep = narrow ? 8 : 4;
+  for (let t = 0; t <= tMax; t += tStep) g += `<text x="${sx(t)}" y="${H - m.b + 18}" text-anchor="middle">${t}</text>`;
+  g += `<text x="${W - m.r}" y="${H - 4}" text-anchor="end">time (s)</text>`;
+  g += `<text x="${m.l - 8}" y="${m.t - 2}" text-anchor="end" dy="-2" style="font-size:10px">dBm</text>`;
+
+  // threshold
+  g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(THRESH)}" y2="${sy(THRESH)}" stroke="var(--ink-2)" stroke-width="1.25" stroke-dasharray="2 4"/>`;
+  if (!narrow) g += `<text x="${W - m.r + 6}" y="${sy(THRESH) + 4}" style="fill:var(--ink-2)">bgscan −60</text>`;
+
+  // model curves (on run A's positions)
+  for (const ap of ["ap1", "ap2"]) {
+    const pts = A.rows.map(s => `${sx(s.t)},${sy(Math.max(Y_MIN, Math.min(Y_MAX, model(ap, s.x))))}`).join(" ");
+    g += `<polyline points="${pts}" fill="none" stroke="var(--model)" stroke-width="1.5" stroke-dasharray="${ap === "ap1" ? "6 4" : "1.5 3"}"/>`;
+    if (!narrow) {
+      const last = A.rows[A.rows.length - 1];
+      g += `<text x="${W - m.r + 6}" y="${sy(Math.max(Y_MIN, Math.min(Y_MAX, model(ap, last.x)))) + 4}">${ap} model</text>`;
+    }
+  }
+
+  // run lines (A under B), broken where no link
+  const line = (run, color) => {
+    let segs = [], cur = [];
+    for (const s of run.rows) {
+      if (s.rssi == null) { if (cur.length) segs.push(cur); cur = []; continue; }
+      cur.push(`${sx(s.t)},${sy(s.rssi)}`);
+    }
+    if (cur.length) segs.push(cur);
+    return segs.map(p => `<polyline points="${p.join(" ")}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`).join("");
+  };
+  g += line(A, "var(--run-a)") + line(B, "var(--run-b)");
+  // handover markers
+  for (const [run, color] of [[A, "var(--run-a)"], [B, "var(--run-b)"]]) {
+    let prev = null;
+    for (const s of run.rows) {
+      if (s.ap && prev && s.ap !== prev && s.rssi != null)
+        g += `<circle cx="${sx(s.t)}" cy="${sy(s.rssi)}" r="5" fill="${color}" stroke="var(--panel)" stroke-width="2"/>`;
+      if (s.ap) prev = s.ap;
+    }
+  }
+  if (!narrow) {
+    const lastA = [...A.rows].reverse().find(s => s.rssi != null);
+    const lastB = [...B.rows].reverse().find(s => s.rssi != null);
+    if (lastA) g += `<text x="${W - m.r + 6}" y="${sy(lastA.rssi) + (lastB && Math.abs(lastB.rssi - lastA.rssi) < 3 ? -4 : 4)}" style="fill:var(--ink)">Run A</text>`;
+    if (lastB) g += `<text x="${W - m.r + 6}" y="${sy(lastB.rssi) + (lastA && Math.abs(lastB.rssi - lastA.rssi) < 3 ? 10 : 4)}" style="fill:var(--ink)">Run B</text>`;
+  }
+
+  // cursor layer
+  g += `<g id="cursor"></g><rect id="hit" x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent"/>`;
+  const svg = $("chart");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = g;
+
+  const hit = $("hit");
+  const pick = ev => {
+    const r = svg.getBoundingClientRect();
+    const x = (ev.clientX - r.left) * (W / r.width);
+    const t = Math.round(((x - m.l) / (W - m.l - m.r)) * tMax);
+    setT(Math.max(0, Math.min(tMax, t)), true);
+  };
+  hit.addEventListener("pointermove", pick);
+  hit.addEventListener("pointerdown", pick);
+  hit.addEventListener("pointerleave", () => { $("tip").hidden = true; });
+
+  $("legend").innerHTML = `
+    <span><i class="key-line" style="border-color:var(--run-a)"></i>Run A</span>
+    <span><i class="key-line" style="border-color:var(--run-b)"></i>Run B</span>
+    <span><i class="key-line dash" style="border-color:var(--model)"></i>ap1 model</span>
+    <span><i class="key-line dot" style="border-color:var(--model)"></i>ap2 model</span>
+    <span><i class="key-line dot" style="border-color:var(--ink-2)"></i>bgscan threshold</span>
+    <span><i class="key-box" style="background:var(--band)"></i>ap2 stronger</span>`;
+  const sl = $("t-scrub"); sl.max = tMax;
+  drawCursor(false);
+}
+
+function drawCursor(showTip) {
+  if (!geom) return;
+  const { sx, sy, m, H, W } = geom;
+  const A = runById(state.a), B = runById(state.b);
+  const a = sample(A, state.t), b = sample(B, state.t);
+  const x = sx(state.t);
+  let g = `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${H - m.b}" stroke="var(--ink-3)" stroke-width="1"/>`;
+  for (const [s, c] of [[a, "var(--run-a)"], [b, "var(--run-b)"]])
+    if (s && s.rssi != null) g += `<circle cx="${x}" cy="${sy(s.rssi)}" r="4.5" fill="${c}" stroke="var(--panel)" stroke-width="2"/>`;
+  $("cursor").innerHTML = g;
+
+  const tip = $("tip");
+  if (showTip) {
+    const px = a ? a.x : b ? b.x : 0;
+    const row = (label, color, s) => `<div class="row"><span><span class="swatch" style="background:${color}"></span>${label}</span><span class="num">${s && s.ap ? s.ap + " " + dbm(s.rssi) : "no link"}</span></div>`;
+    tip.innerHTML = `<div class="t">t = ${state.t} s · x = ${px.toFixed(1)} m</div>
+      ${row("Run A", "var(--run-a)", a)}${row("Run B", "var(--run-b)", b)}
+      <div class="row muted"><span>ap1 model</span><span class="num">${dbm(model("ap1", px))}</span></div>
+      <div class="row muted"><span>ap2 model</span><span class="num">${dbm(model("ap2", px))}</span></div>
+      <div class="row"><span>Better AP</span><span class="num">${bestAp(px)}</span></div>`;
+    tip.hidden = false;
+    const box = $("chart-box").getBoundingClientRect();
+    const scale = box.width / W;
+    let left = x * scale + 14;
+    if (left + tip.offsetWidth > box.width) left = x * scale - tip.offsetWidth - 14;
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = (m.t + 6) * scale + "px";
+  }
+}
+
+/* ---------- render: corridor ---------- */
+function renderCorridor() {
+  const svg = $("corridor");
+  const W = Math.max(320, $("chart-box").clientWidth);
+  const H = 132, l = 44, r = 20;
+  const sx = x => l + (x / X_MAX) * (W - l - r);
+  const A = runById(state.a), B = runById(state.b);
+  const a = sample(A, state.t), b = sample(B, state.t);
+  const apY = 30, laneA = 76, laneB = 104;
+  let g = `<line x1="${sx(0)}" x2="${sx(X_MAX)}" y1="${apY}" y2="${apY}" stroke="var(--line)" stroke-width="1"/>`;
+  for (let x = 0; x <= X_MAX; x += 10) {
+    g += `<line x1="${sx(x)}" x2="${sx(x)}" y1="${apY - 3}" y2="${apY + 3}" stroke="var(--ink-3)" stroke-width="1"/>`;
+    if (x % 20 === 0) g += `<text x="${sx(x)}" y="${H - 6}" text-anchor="middle">${x}</text>`;
+  }
+  g += `<text x="${sx(X_MAX)}" y="${H - 6}" text-anchor="end" dx="0" dy="-12" style="font-size:10px">metres</text>`;
+  for (const ap of ["ap1", "ap2"]) {
+    const x = sx(AP_POS[ap]);
+    g += `<path d="M${x - 7},${apY + 8} L${x},${apY - 6} L${x + 7},${apY + 8} Z" fill="var(--ink)"/>`;
+    g += `<text x="${x}" y="${apY - 12}" text-anchor="middle" style="fill:var(--ink);font-weight:500">${ap} · ch ${ap === "ap1" ? 1 : 6}</text>`;
+  }
+  // midpoint where ap2 becomes stronger
+  const mid = (AP_POS.ap1 + AP_POS.ap2) / 2;
+  g += `<line x1="${sx(mid)}" x2="${sx(mid)}" y1="${apY + 12}" y2="${laneB + 8}" stroke="var(--ok)" stroke-width="1" stroke-dasharray="3 3"/>`;
+  for (const [s, color, y, label] of [[a, "var(--run-a)", laneA, "A"], [b, "var(--run-b)", laneB, "B"]]) {
+    g += `<text x="${l - 10}" y="${y + 4}" text-anchor="end" style="fill:var(--ink-2)">${label}</text>`;
+    g += `<line x1="${sx(0)}" x2="${sx(X_MAX)}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`;
+    if (!s) continue;
+    if (s.ap && s.ap in AP_POS)
+      g += `<line x1="${sx(s.x)}" y1="${y}" x2="${sx(AP_POS[s.ap])}" y2="${apY + 8}" stroke="${color}" stroke-width="1.25" opacity=".8"/>`;
+    g += `<circle cx="${sx(s.x)}" cy="${y}" r="6" fill="${color}" stroke="var(--panel)" stroke-width="2"/>`;
+    const txt = s.ap ? `${s.ap} ${dbm(s.rssi)} dBm` : "no link";
+    const right = sx(s.x) + 12 + 90 < W;
+    g += `<text x="${sx(s.x) + (right ? 12 : -12)}" y="${y + 4}" text-anchor="${right ? "start" : "end"}" style="fill:var(--ink)">${txt}</text>`;
+  }
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = g;
+}
+
+/* ---------- render: table ---------- */
+function renderTable() {
+  const A = runById(state.a), B = runById(state.b);
+  const hasScan = A.rows.some(s => Object.keys(s.scan).length) || B.rows.some(s => Object.keys(s.scan).length);
+  const ts = [...new Set([...A.rows, ...B.rows].map(s => s.t))].sort((x, y) => x - y);
+  const scanCell = s => {
+    if (!s || !Object.keys(s.scan).length) return `<td class="l dim">–</td>`;
+    return `<td class="l">${Object.entries(s.scan).map(([k, v]) => `${k} ${dbm(v.rssi)}`).join(" · ")}</td>`;
+  };
+  let h = `<thead><tr><th>t (s)</th><th>x (m)</th><th class="l">Run A</th><th class="l">Run B</th><th>Δ B−A (dB)</th><th>ap1 model</th><th>ap2 model</th><th class="l">Better AP</th><th class="l">Verdict A</th><th class="l">Verdict B</th>${hasScan ? `<th class="l">Scan A</th><th class="l">Scan B</th>` : ""}</tr></thead><tbody>`;
+  for (const t of ts) {
+    const a = sample(A, t), b = sample(B, t);
+    const x = (a || b).x;
+    const d = a && b && a.rssi != null && b.rssi != null ? b.rssi - a.rssi : null;
+    const va = a ? verdict(a, state.margin) : null, vb = b ? verdict(b, state.margin) : null;
+    const cell = s => !s ? `<td class="l dim">–</td>` : s.ap ? `<td class="l">${s.ap} ${dbm(s.rssi)}</td>` : `<td class="l dim">no link</td>`;
+    const pill = v => !v ? `<td class="l dim">–</td>` : `<td class="l"><span class="pill ${v.cls}">${v.label}${v.cls === "bad" ? ` +${Math.round(v.gain)} dB` : ""}</span></td>`;
+    h += `<tr data-t="${t}"${t === state.t ? ' class="active"' : ""}>
+      <td>${t}</td><td>${x.toFixed(1)}</td>${cell(a)}${cell(b)}
+      <td class="${d > 0 ? "delta-pos" : d < 0 ? "delta-neg" : "dim"}">${d == null ? "–" : fmt(d)}</td>
+      <td>${dbm(model("ap1", x))}</td><td>${dbm(model("ap2", x))}</td><td class="l">${bestAp(x)}</td>
+      ${pill(va)}${pill(vb)}${hasScan ? scanCell(a) + scanCell(b) : ""}</tr>`;
+  }
+  $("table").innerHTML = h + "</tbody>";
+}
+
+/* ---------- findings ---------- */
+function renderFindings() {
+  const A = runById(state.a), B = runById(state.b);
+  const sa = summarize(A, state.margin), sb = summarize(B, state.margin);
+  const both = A.rows.filter(s => sample(B, s.t));
+  const diffs = both.map(s => { const o = sample(B, s.t); return s.rssi != null && o.rssi != null ? Math.abs(o.rssi - s.rssi) : null; }).filter(v => v != null);
+  const mean = diffs.length ? diffs.reduce((p, c) => p + c, 0) / diffs.length : null;
+  const items = [];
+  items.push(`Run A and Run B differ by ${mean == null ? "–" : mean.toFixed(2)} dB on average across the seconds where both are connected. ${mean != null && mean < 1 ? "The change between them made no measurable difference." : ""}`);
+  for (const [k, s] of [["A", sa], ["B", sb]]) {
+    if (!s.first) { items.push(`Run ${k} never connected.`); continue; }
+    let t = `Run ${k} connected at t = ${s.first.t} s (x = ${s.first.x.toFixed(1)} m)`;
+    t += s.handovers ? ` and roamed ${s.handovers} time${s.handovers > 1 ? "s" : ""}.` : ` and never roamed.`;
+    if (s.firstSticky) t += ` From t = ${s.firstSticky.t} s it stayed on ${s.firstSticky.ap} while ${other(s.firstSticky.ap)} was at least ${state.margin} dB stronger (${s.sticky} s in total).`;
+    items.push(t);
+  }
+  items.push(`The model uses log-distance with exponent 3.5 and a 1 m reference of ${REF.toFixed(1)} dBm, fitted from the connected samples. It tracks the measured ap1 signal within about 1 dB.`);
+  if (!sa.scans && !sb.scans) items.push(`Neither run has scan results, so the logs can't say whether sta1 ever saw ap2. The next run with <span class="mono">--wpa-log</span> adds them; paste it below.`);
+  $("findings").innerHTML = items.map(i => `<li>${i}</li>`).join("");
+}
+
+/* ---------- orchestration ---------- */
+function setT(t, fromChart) {
+  state.t = t;
+  $("t-scrub").value = t;
+  $("t-out").textContent = `t = ${t} s`;
+  drawCursor(!!fromChart);
+  renderCorridor();
+  for (const tr of $("table").querySelectorAll("tr[data-t]")) tr.classList.toggle("active", +tr.dataset.t === t);
+}
+function renderAll() {
+  REF = fitRef();
+  renderSelects(); renderTiles(); renderChart(); renderCorridor(); renderTable(); renderFindings();
+  setT(Math.min(state.t, geom ? geom.tMax : state.t), false);
+}
+
+$("sel-a").addEventListener("change", e => { state.a = e.target.value; renderAll(); });
+$("sel-b").addEventListener("change", e => { state.b = e.target.value; renderAll(); });
+$("margin").addEventListener("input", e => { const v = +e.target.value; if (!Number.isNaN(v)) { state.margin = v; renderTiles(); renderTable(); renderFindings(); } });
+$("t-scrub").addEventListener("input", e => setT(+e.target.value, false));
+$("table").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-t]");
+  if (tr) { setT(+tr.dataset.t, false); $("chart-box").scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+});
+
+$("run-file").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { $("run-text").value = rd.result; if (!$("run-name").value) $("run-name").value = f.name; };
+  rd.readAsText(f);
+});
+$("add-run").addEventListener("click", () => {
+  const text = $("run-text").value;
+  const rows = parseLog(text);
+  const msg = $("msg");
+  if (!rows.length) {
+    msg.className = "msg err";
+    msg.textContent = "No timeline rows found. Paste the part of the log that starts with “t(s)  x(m)  AP  RSSI(dBm)”.";
+    return;
+  }
+  const name = $("run-name").value.trim() || `Run ${runs.length + 1}`;
+  const id = "u" + Date.now();
+  saved.push({ id, name, text });
+  save(saved);
+  rebuildRuns();
+  state.a = state.b; state.b = id;
+  renderAll();
+  const scans = rows.filter(s => Object.keys(s.scan).length).length;
+  msg.className = "msg ok";
+  msg.textContent = `Added “${name}”: ${rows.length} seconds${scans ? `, scan results at ${scans} of them` : ""}. It is now Run B.`;
+  $("run-text").value = ""; $("run-name").value = "";
+});
+$("clear-runs").addEventListener("click", () => {
+  saved = []; save(saved); rebuildRuns();
+  state.a = "wpa2"; state.b = "fixed"; renderAll();
+  $("msg").className = "msg ok"; $("msg").textContent = "Removed added runs. Runs 1–3 remain.";
+});
+
+let rz;
+new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => { renderChart(); renderCorridor(); }, 80); }).observe($("chart-box"));
+
+rebuildRuns();
+renderAll();
+})();
+</script>
